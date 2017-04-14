@@ -1,0 +1,129 @@
+---
+name: bosh
+
+releases:
+- name: bosh
+  url: https://bosh.io/d/github.com/cloudfoundry/bosh?v=261.4
+  sha1: 4da9cedbcc8fbf11378ef439fb89de08300ad091
+- name: bosh-vsphere-cpi
+  url: https://bosh.io/d/github.com/cloudfoundry-incubator/bosh-vsphere-cpi-release?v=39
+  sha1: 2b68e45b553c3867fc4f7021a723eae7ec3c23fd
+
+resource_pools:
+- name: vms
+  network: private
+  stemcell:
+    url: https://bosh.io/d/stemcells/bosh-vsphere-esxi-ubuntu-trusty-go_agent?v=3363.15
+    sha1: d5571cd8e13d1daca99dc821e4fb751f4cdd42f8
+  cloud_properties:
+    cpu: 2
+    ram: 4_096
+    disk: 20_000
+  env:
+    bosh:
+      # c1oudc0w is a default password for vcap user
+      password: "$6$4gDD3aV0rdqlrKC$2axHCxGKIObs6tAmMTqYCspcdvQXh3JJcvWOY2WGb4SrdXtnCyNaWlrf3WEqvYR2MYizEGp3kMmbpwBC6jsHt0"
+
+disk_pools:
+- name: disks
+  disk_size: 20_000
+
+networks:
+- name: private
+  type: manual
+  subnets:
+  - range: 10.0.0.0/24
+    gateway: 10.0.0.1
+    dns: [10.0.0.2]
+    cloud_properties: {name: NETWORK-NAME} # <--- Replace with Network name
+
+jobs:
+- name: bosh
+  instances: 1
+
+  templates:
+  - {name: nats, release: bosh}
+  - {name: postgres, release: bosh}
+  - {name: blobstore, release: bosh}
+  - {name: director, release: bosh}
+  - {name: health_monitor, release: bosh}
+  - {name: vsphere_cpi, release: bosh-vsphere-cpi}
+
+  resource_pool: vms
+  persistent_disk_pool: disks
+
+  networks:
+  - {name: private, static_ips: [10.0.0.6]}
+
+  properties:
+    nats:
+      address: 127.0.0.1
+      user: nats
+      # password: nats-password # <--- Uncomment & change
+
+    postgres: &db
+      listen_address: 127.0.0.1
+      host: 127.0.0.1
+      user: postgres
+      # password: postgres-password # <--- Uncomment & change
+      database: bosh
+      adapter: postgres
+
+    blobstore:
+      address: 10.0.0.6
+      port: 25250
+      provider: dav
+      director:
+        user: director
+        # password: director-password # <--- Uncomment & change
+      agent:
+        user: agent
+        # password: agent-password # <--- Uncomment & change
+
+    director:
+      address: 127.0.0.1
+      name: my-bosh
+      db: *db
+      cpi_job: vsphere_cpi
+      user_management:
+        provider: local
+        local:
+          users:
+          # - {name: admin, password: admin} # <--- Uncomment & change
+          # - {name: hm, password: hm-password} # <--- Uncomment & change
+
+    hm:
+      director_account:
+        user: hm
+        # password: hm-password # <--- Uncomment & change
+      resurrector_enabled: true
+      intervals:
+        agent_timeout: 180
+
+    vcenter: &vcenter # <--- Replace values below
+      address: VCENTER-IP
+      user: VCENTER-USER
+      password: VCENTER-PASSWORD
+      datacenters:
+      - name: DATACENTER-NAME
+        vm_folder: VMS-FOLDER-NAME
+        template_folder: TEMPLATES-FOLDER-NAME
+        datastore_pattern: DATASTORE-NAME-PATTERN
+        persistent_datastore_pattern: DATASTORE-NAME-PATTERN
+        disk_path: DISK-FOLDER-NAME
+        clusters: [CLUSTER-NAME]
+
+    # agent: {mbus: "nats://nats:nats-password@10.0.0.6:4222"} # <--- Uncomment & change
+
+    ntp: &ntp [0.pool.ntp.org, 1.pool.ntp.org]
+
+cloud_provider:
+  template: {name: vsphere_cpi, release: bosh-vsphere-cpi}
+
+  # mbus: "https://mbus:mbus-password@10.0.0.6:6868" # <--- Uncomment & change
+
+  properties:
+    vcenter: *vcenter
+    # agent: {mbus: "https://mbus:mbus-password@0.0.0.0:6868"} # <--- Uncomment & change
+    blobstore: {provider: local, path: /var/vcap/micro_bosh/data/cache}
+    ntp: *ntp
